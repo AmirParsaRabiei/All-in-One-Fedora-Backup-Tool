@@ -8,9 +8,9 @@ echo "Backup location: $backup_dir"
 # Function to prompt for user confirmation
 confirm() {
     while true; do
-        read -p "$1 (Y/n): " yn
+        read -p "$1 (Y/n, default is Y): " yn
         case $yn in
-            [Yy]* ) return 0;;
+            [Yy]* | "" ) return 0;;
             [Nn]* ) return 1;;
             * ) echo "Please answer yes or no.";;
         esac
