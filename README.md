@@ -4,8 +4,7 @@ A comprehensive script to back up your Fedora system configuration files, user-s
 Todo : 
 - add restore script
 - edge cache
-- image option
-- update backups
+- update backups script
 
 
 ### Summary
