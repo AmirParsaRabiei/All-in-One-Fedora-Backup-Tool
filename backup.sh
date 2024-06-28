@@ -501,18 +501,35 @@ else
     fi
 fi
 
-# Compress and encrypt the backup
+# Compress the backup
 if [ -z "$compress_done" ]; then
-    if confirm "Do you want to compress and encrypt the backup?"; then
+    if confirm "Do you want to compress the backup?"; then
         section_start_time=$(date +%s)
-        echo "Compressing and encrypting the backup..."
+        echo "Compressing the backup..."
+        
+        if tar -czf "$backup_dir.tar.gz" -C "$backup_dir" .; then
+            echo "Backup compressed successfully."
+            section_end_time=$(date +%s)
+            log_section_report "Compressing the backup" $section_start_time $section_end_time
+            log_state "compress"
+        else
+            handle_error "Failed to compress the backup"
+        fi
+    fi
+fi
+
+# Encrypt the backup
+if [ -z "$encrypt_done" ]; then
+    if confirm "Do you want to encrypt the backup?"; then
+        section_start_time=$(date +%s)
+        echo "Encrypting the backup..."
         
         # Generate a random passphrase
         passphrase=$(openssl rand -base64 32)
         
-        # Compress and encrypt in one step
-        if tar -czf - -C "$backup_dir" . | openssl enc -aes-256-cbc -salt -out "$backup_dir.tar.gz.enc" -pass pass:"$passphrase"; then
-            echo "Backup compressed and encrypted successfully."
+        # Encrypt the compressed backup
+        if openssl enc -aes-256-cbc -salt -in "$backup_dir.tar.gz" -out "$backup_dir.tar.gz.enc" -pass pass:"$passphrase"; then
+            echo "Backup encrypted successfully."
             echo "Your encryption passphrase is: $passphrase"
             echo "IMPORTANT: Store this passphrase securely. You will need it to decrypt the backup."
             
@@ -521,10 +538,13 @@ if [ -z "$compress_done" ]; then
             chmod 600 "$backup_dir.passphrase"
             
             section_end_time=$(date +%s)
-            log_section_report "Compressing and encrypting the backup" $section_start_time $section_end_time
-            log_state "compress"
+            log_section_report "Encrypting the backup" $section_start_time $section_end_time
+            log_state "encrypt"
+            
+            # Remove the unencrypted compressed file
+            rm "$backup_dir.tar.gz"
         else
-            handle_error "Failed to compress and encrypt the backup"
+            handle_error "Failed to encrypt the backup"
         fi
     fi
 fi
