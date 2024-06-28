@@ -28,7 +28,7 @@ verify_backup() {
 }
 
 # Check for required packages and install if missing
-required_packages=(rsync dd gzip dnf flatpak pip openssl)
+required_packages=(rsync dd gzip dnf flatpak pip openssl borg)
 missing_packages=()
 
 for package in "${required_packages[@]}"; do
@@ -54,10 +54,24 @@ if [ ${#missing_packages[@]} -gt 0 ]; then
     esac
 fi
 
-# Get the directory from which the script is executed
-timestamp=$(date +"%Y%m%d_%H%M%S")
-backup_dir=$(pwd)/backup_$timestamp
-mkdir -p "$backup_dir"
+# Check for incomplete backups
+incomplete_backups=$(find . -maxdepth 1 -type d -name "backup_*" -exec test -f {}/backup_state.log \; -print)
+if [ -n "$incomplete_backups" ]; then
+    echo "Incomplete backups found:"
+    select backup_dir in $incomplete_backups; do
+        if [ -n "$backup_dir" ]; then
+            echo "Resuming backup in $backup_dir"
+            break
+        else
+            echo "Invalid selection. Please try again."
+        fi
+    done
+else
+    # Create new backup directory
+    timestamp=$(date +"%Y%m%d_%H%M%S")
+    backup_dir=$(pwd)/backup_$timestamp
+    mkdir -p "$backup_dir"
+fi
 
 state_file="$backup_dir/backup_state.log"
 
@@ -85,7 +99,9 @@ resume_from_state() {
                 databases) databases_done=1 ;;
                 logs) logs_done=1 ;;
                 disk_image) disk_image_done=1 ;;
+                borg) borg_done=1 ;;
                 compress) compress_done=1 ;;
+                encrypt) encrypt_done=1 ;;
             esac
         done < "$state_file"
     fi
@@ -123,7 +139,8 @@ log_section_report() {
 echo "Choose backup type:"
 echo "1) Manual backup"
 echo "2) Disk image"
-read -p "Enter choice [1-2]: " backup_type
+echo "3) Borg backup"
+read -p "Enter choice [1-3]: " backup_type
 
 start_time=$(date +%s)
 
@@ -473,7 +490,7 @@ if [ "$backup_type" == "1" ]; then
         fi
     fi
 
-else
+elif [ "$backup_type" == "2" ]; then
     # Disk image backup
     if [ -z "$disk_image_done" ]; then
         echo "Available disks for imaging:"
@@ -499,6 +516,47 @@ else
             fi
         fi
     fi
+
+elif [ "$backup_type" == "3" ]; then
+    # Borg backup
+    if [ -z "$borg_done" ]; then
+        # Initialize Borg repository if it doesn't exist
+        borg_repo="$backup_dir/borg_repo"
+        if [ ! -d "$borg_repo" ]; then
+            echo "Initializing Borg repository..."
+            borg init --encryption=repokey "$borg_repo"
+        fi
+
+        # Create Borg backup
+        echo "Creating Borg backup..."
+        section_start_time=$(date +%s)
+
+        if borg create --progress --stats --checkpoint-interval 300 \
+            "$borg_repo::backup-{now}" \
+            /etc \
+            /var \
+            /opt \
+            "$HOME/.config" \
+            "$HOME"; then
+            echo "Borg backup created successfully."
+            section_end_time=$(date +%s)
+            log_section_report "Borg backup" $section_start_time $section_end_time
+            log_state "borg"
+        else
+            handle_error "Failed to create Borg backup"
+        fi
+
+        # Prune old backups
+        echo "Pruning old backups..."
+        borg prune --keep-daily 7 --keep-weekly 4 --keep-monthly 6 "$borg_repo"
+
+        # Verify the backup
+        echo "Verifying Borg backup..."
+        borg check "$borg_repo"
+    fi
+else
+    echo "Invalid choice. Exiting."
+    exit 1
 fi
 
 # Compress the backup
@@ -524,18 +582,22 @@ if [ -z "$encrypt_done" ]; then
         section_start_time=$(date +%s)
         echo "Encrypting the backup..."
         
-        # Generate a random passphrase
-        passphrase=$(openssl rand -base64 32)
+        # Prompt for password
+        read -s -p "Enter encryption password: " passphrase
+        echo
+        read -s -p "Confirm encryption password: " passphrase_confirm
+        echo
+
+        # Verify passwords match
+        if [ "$passphrase" != "$passphrase_confirm" ]; then
+            echo "Error: Passwords do not match. Encryption aborted."
+            exit 1
+        fi
         
         # Encrypt the compressed backup
         if openssl enc -aes-256-cbc -salt -in "$backup_dir.tar.gz" -out "$backup_dir.tar.gz.enc" -pass pass:"$passphrase"; then
             echo "Backup encrypted successfully."
-            echo "Your encryption passphrase is: $passphrase"
-            echo "IMPORTANT: Store this passphrase securely. You will need it to decrypt the backup."
-            
-            # Save the passphrase to a file (consider a more secure method in production)
-            echo "$passphrase" > "$backup_dir.passphrase"
-            chmod 600 "$backup_dir.passphrase"
+            echo "IMPORTANT: Remember your encryption password. You will need it to decrypt the backup."
             
             section_end_time=$(date +%s)
             log_section_report "Encrypting the backup" $section_start_time $section_end_time
