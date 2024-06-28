@@ -3,189 +3,263 @@
 # Function to handle errors
 handle_error() {
     local error_message=$1
-    echo "Error: $error_message" >> "restore_error.log"
-    echo "Error occurred. Check restore_error.log for details."
+    echo "Error: $error_message" >&2
+    exit 1
 }
 
-# Function to prompt for user confirmation
-confirm() {
-    while true; do
-        read -p "$1 (Y/n): " yn
-        case ${yn:-Y} in
-            [Yy]* ) return 0;;
-            [Nn]* ) return 1;;
-            * ) echo "Please answer yes or no.";;
-        esac
-    done
-}
-
-# Function to decrypt the backup
+# Function to decrypt backup
 decrypt_backup() {
     local encrypted_file=$1
-    local output_file=$2
-
-    read -sp "Enter the decryption passphrase: " passphrase
+    local decrypted_file=$2
+    
+    read -s -p "Enter decryption password: " passphrase
     echo
-
-    if openssl enc -d -aes-256-cbc -in "$encrypted_file" -out "$output_file" -pass pass:"$passphrase"; then
+    
+    if openssl enc -d -aes-256-cbc -in "$encrypted_file" -out "$decrypted_file" -pass pass:"$passphrase"; then
         echo "Backup decrypted successfully."
     else
         handle_error "Failed to decrypt the backup"
-        exit 1
     fi
 }
 
-# Function to extract the backup
+# Function to extract backup
 extract_backup() {
     local archive=$1
     local destination=$2
-
+    
     if tar -xzf "$archive" -C "$destination"; then
         echo "Backup extracted successfully."
     else
         handle_error "Failed to extract the backup"
-        exit 1
     fi
 }
 
-# Main restore process
-echo "Welcome to the Restore Script"
-echo "Please ensure this script is in the same directory as your backup files."
+# Function to restore specific directories
+restore_directory() {
+    local source=$1
+    local destination=$2
+    
+    if [ -d "$source" ]; then
+        if sudo rsync -avh --delete "$source/" "$destination/"; then
+            echo "Restored $destination successfully."
+        else
+            handle_error "Failed to restore $destination"
+        fi
+    else
+        echo "Warning: Source directory $source not found. Skipping."
+    fi
+}
 
-# Prompt for restore type
-echo "Choose restore type:"
-echo "1) Restore from disk image"
-echo "2) Restore from manual backup"
-read -p "Enter choice [1-2]: " restore_type
+# Function to restore packages
+restore_packages() {
+    local packages_file=$1
+    
+    if [ -f "$packages_file" ]; then
+        if sudo dnf install -y $(cat "$packages_file"); then
+            echo "Packages restored successfully."
+        else
+            handle_error "Failed to restore packages"
+        fi
+    else
+        echo "Warning: Packages list file not found. Skipping package restoration."
+    fi
+}
 
-case $restore_type in
-    1)
-        echo "Restoring from disk image..."
-        
-        # List available disk image backups
-        image_backups=$(ls *image*.img.enc 2>/dev/null)
-        if [ -z "$image_backups" ]; then
-            echo "No disk image backups found."
-            exit 1
+# Function to restore Flatpak apps
+restore_flatpak_apps() {
+    local flatpak_file=$1
+    
+    if [ -f "$flatpak_file" ]; then
+        if xargs -a "$flatpak_file" flatpak install -y; then
+            echo "Flatpak apps restored successfully."
+        else
+            handle_error "Failed to restore Flatpak apps"
         fi
+    else
+        echo "Warning: Flatpak apps list file not found. Skipping Flatpak apps restoration."
+    fi
+}
+
+# Function to restore pip packages
+restore_pip_packages() {
+    local requirements_file=$1
+    
+    if [ -f "$requirements_file" ]; then
+        if pip install -r "$requirements_file"; then
+            echo "Pip packages restored successfully."
+        else
+            handle_error "Failed to restore pip packages"
+        fi
+    else
+        echo "Warning: Requirements file not found. Skipping pip packages restoration."
+    fi
+}
+
+# Function to restore disk image
+restore_disk_image() {
+    local image_file=$1
+    
+    echo "Available disks:"
+    lsblk
+    
+    read -p "Enter the disk to restore to (e.g., /dev/nvme1n1): " restore_disk
+    
+    if [ ! -b "$restore_disk" ]; then
+        handle_error "Invalid disk. Please enter a valid block device."
+    fi
+    
+    read -p "Are you sure you want to restore the image to $restore_disk? This will erase all data on the disk. (y/N): " confirm
+    if [[ $confirm =~ ^[Yy]$ ]]; then
+        if sudo dd if="$image_file" of="$restore_disk" bs=4M status=progress; then
+            echo "Disk image restored successfully."
+        else
+            handle_error "Failed to restore disk image"
+        fi
+    else
+        echo "Disk image restoration cancelled."
+    fi
+}
+
+# Function to restore Borg backup
+restore_borg_backup() {
+    local borg_repo=$1
+    local restore_path=$2
+    
+    echo "Available Borg archives:"
+    borg list "$borg_repo"
+    
+    read -p "Enter the archive name to restore: " archive_name
+    
+    if borg extract --progress "$borg_repo::$archive_name"; then
+        echo "Borg backup restored successfully."
+    else
+        handle_error "Failed to restore Borg backup"
+    fi
+}
+
+# Main script
+
+echo "Fedora Backup Restore Script"
+echo "============================"
+
+# Find available backups
+backups=$(find . -maxdepth 1 -type d -name "backup_*" -print)
+
+if [ -z "$backups" ]; then
+    handle_error "No backup folders found in the current directory."
+fi
+
+echo "Available backups:"
+select backup_dir in $backups; do
+    if [ -n "$backup_dir" ]; then
+        echo "Selected backup: $backup_dir"
+        break
+    else
+        echo "Invalid selection. Please try again."
+    fi
+done
+
+# Check if the backup is encrypted
+if [ -f "$backup_dir.tar.gz.enc" ]; then
+    echo "Encrypted backup found. Decrypting..."
+    decrypt_backup "$backup_dir.tar.gz.enc" "$backup_dir.tar.gz"
+    
+    echo "Extracting decrypted backup..."
+    extract_backup "$backup_dir.tar.gz" "$backup_dir"
+    rm "$backup_dir.tar.gz"  # Remove the decrypted archive after extraction
+elif [ -f "$backup_dir.tar.gz" ]; then
+    echo "Compressed backup found. Extracting..."
+    extract_backup "$backup_dir.tar.gz" "$backup_dir"
+elif [ ! -d "$backup_dir" ]; then
+    handle_error "Backup directory not found or is not accessible."
+fi
+
+# Determine the backup type
+if [ -d "$backup_dir/borg_repo" ]; then
+    backup_type="borg"
+elif [ -f "$backup_dir/image/disk-image.img" ]; then
+    backup_type="disk_image"
+else
+    backup_type="manual"
+fi
+
+echo "Detected backup type: $backup_type"
+
+case $backup_type in
+    "manual")
+        echo "Select components to restore:"
+        options=("System configuration (/etc)" "Var directory (/var)" "Opt directory (/opt)" "User configuration (~/.config)" "Home directory" "Browser data" "GNOME extensions" "Installed packages" "Pip packages" "Database dumps" "System logs" "All of the above")
         
-        echo "Available disk image backups:"
-        select image in $image_backups; do
-            if [ -n "$image" ]; then
-                break
-            else
-                echo "Invalid selection. Please try again."
-            fi
+        select opt in "${options[@]}"
+        do
+            case $opt in
+                "System configuration (/etc)")
+                    restore_directory "$backup_dir/etc" "/etc"
+                    ;;
+                "Var directory (/var)")
+                    restore_directory "$backup_dir/var" "/var"
+                    ;;
+                "Opt directory (/opt)")
+                    restore_directory "$backup_dir/opt" "/opt"
+                    ;;
+                "User configuration (~/.config)")
+                    restore_directory "$backup_dir/config" "$HOME/.config"
+                    ;;
+                "Home directory")
+                    restore_directory "$backup_dir/home" "$HOME"
+                    ;;
+                "Browser data")
+                    restore_directory "$backup_dir/mozilla" "$HOME/.mozilla"
+                    restore_directory "$backup_dir/google-chrome" "$HOME/.config/google-chrome"
+                    restore_directory "$backup_dir/microsoft-edge" "$HOME/.config/microsoft-edge"
+                    ;;
+                "GNOME extensions")
+                    restore_directory "$backup_dir/gnome-extensions" "$HOME/.local/share/gnome-shell/extensions"
+                    sudo restore_directory "$backup_dir/gnome-extensions/system" "/usr/share/gnome-shell/extensions"
+                    ;;
+                "Installed packages")
+                    restore_packages "$backup_dir/rpm-packages-list.txt"
+                    restore_flatpak_apps "$backup_dir/flatpak-apps-list.txt"
+                    ;;
+                "Pip packages")
+                    restore_pip_packages "$backup_dir/requirements.txt"
+                    ;;
+                "Database dumps")
+                    echo "Restoring database dumps..."
+                    # Add specific commands to restore database dumps
+                    ;;
+                "System logs")
+                    restore_directory "$backup_dir/system_logs" "/var/log"
+                    ;;
+                "All of the above")
+                    restore_directory "$backup_dir/etc" "/etc"
+                    restore_directory "$backup_dir/var" "/var"
+                    restore_directory "$backup_dir/opt" "/opt"
+                    restore_directory "$backup_dir/config" "$HOME/.config"
+                    restore_directory "$backup_dir/home" "$HOME"
+                    restore_directory "$backup_dir/mozilla" "$HOME/.mozilla"
+                    restore_directory "$backup_dir/google-chrome" "$HOME/.config/google-chrome"
+                    restore_directory "$backup_dir/microsoft-edge" "$HOME/.config/microsoft-edge"
+                    restore_directory "$backup_dir/gnome-extensions" "$HOME/.local/share/gnome-shell/extensions"
+                    sudo restore_directory "$backup_dir/gnome-extensions/system" "/usr/share/gnome-shell/extensions"
+                    restore_packages "$backup_dir/rpm-packages-list.txt"
+                    restore_flatpak_apps "$backup_dir/flatpak-apps-list.txt"
+                    restore_pip_packages "$backup_dir/requirements.txt"
+                    echo "Restoring database dumps..."
+                    # Add specific commands to restore database dumps
+                    restore_directory "$backup_dir/system_logs" "/var/log"
+                    break
+                    ;;
+                *) echo "Invalid option $REPLY";;
+            esac
         done
-        
-        # Decrypt the disk image
-        decrypt_backup "$image" "${image%.enc}"
-        
-        # Prompt for target disk
-        lsblk
-        read -p "Enter the target disk to restore to (e.g., /dev/sda): " target_disk
-        
-        if confirm "Are you sure you want to restore the image to $target_disk? This will erase all data on the disk."; then
-            if sudo dd if="${image%.enc}" of="$target_disk" bs=4M status=progress; then
-                echo "Disk image restored successfully."
-            else
-                handle_error "Failed to restore disk image"
-            fi
-        fi
         ;;
-    2)
-        echo "Restoring from manual backup..."
-        
-        # List available manual backups
-        manual_backups=$(ls backup_*.tar.gz.enc 2>/dev/null)
-        if [ -z "$manual_backups" ]; then
-            echo "No manual backups found."
-            exit 1
-        fi
-        
-        echo "Available manual backups:"
-        select backup in $manual_backups; do
-            if [ -n "$backup" ]; then
-                break
-            else
-                echo "Invalid selection. Please try again."
-            fi
-        done
-        
-        # Decrypt and extract the backup
-        decrypt_backup "$backup" "${backup%.enc}"
-        extract_backup "${backup%.enc}" "."
-        
-        # Restore specific components
-        backup_dir="${backup%.tar.gz.enc}"
-        
-        if [ -d "$backup_dir/etc" ] && confirm "Restore system configuration files (/etc)?"; then
-            sudo rsync -avh --delete "$backup_dir/etc/" /etc/
-        fi
-        
-        if [ -d "$backup_dir/var" ] && confirm "Restore /var directory?"; then
-            sudo rsync -avh --delete "$backup_dir/var/" /var/
-        fi
-        
-        if [ -d "$backup_dir/opt" ] && confirm "Restore /opt directory?"; then
-            sudo rsync -avh --delete "$backup_dir/opt/" /opt/
-        fi
-        
-        if [ -d "$backup_dir/config" ] && confirm "Restore user-specific configuration files (~/.config)?"; then
-            rsync -avh --delete "$backup_dir/config/" "$HOME/.config/"
-        fi
-        
-        if [ -d "$backup_dir/home" ] && confirm "Restore home directory?"; then
-            rsync -avh --delete "$backup_dir/home/" "$HOME/"
-        fi
-        
-        if [ -d "$backup_dir/mozilla" ] && confirm "Restore Firefox data?"; then
-            rsync -avh --delete "$backup_dir/mozilla/" "$HOME/.mozilla/"
-        fi
-        
-        if [ -d "$backup_dir/google-chrome" ] && confirm "Restore Chrome data?"; then
-            rsync -avh --delete "$backup_dir/google-chrome/" "$HOME/.config/google-chrome/"
-        fi
-        
-        if [ -d "$backup_dir/microsoft-edge" ] && confirm "Restore Edge data?"; then
-            rsync -avh --delete "$backup_dir/microsoft-edge/" "$HOME/.config/microsoft-edge/"
-        fi
-        
-        if [ -d "$backup_dir/gnome-extensions" ] && confirm "Restore GNOME extensions?"; then
-            rsync -avh --delete "$backup_dir/gnome-extensions/" "$HOME/.local/share/gnome-shell/extensions/"
-            sudo rsync -avh --delete "$backup_dir/gnome-extensions/system/" /usr/share/gnome-shell/extensions/
-        fi
-        
-        if [ -f "$backup_dir/rpm-packages-list.txt" ] && confirm "Restore RPM packages?"; then
-            sudo dnf install $(cat "$backup_dir/rpm-packages-list.txt")
-        fi
-        
-        if [ -f "$backup_dir/flatpak-apps-list.txt" ] && confirm "Restore Flatpak applications?"; then
-            while read -r app; do
-                flatpak install -y "$app"
-            done < "$backup_dir/flatpak-apps-list.txt"
-        fi
-        
-        if [ -f "$backup_dir/requirements.txt" ] && confirm "Restore pip packages?"; then
-            pip install -r "$backup_dir/requirements.txt"
-        fi
-        
-        if [ -d "$backup_dir/database_dumps" ] && confirm "Restore database dumps?"; then
-            if [ -f "$backup_dir/database_dumps/mysql_dump.sql" ]; then
-                sudo mysql < "$backup_dir/database_dumps/mysql_dump.sql"
-            fi
-            if [ -f "$backup_dir/database_dumps/postgresql_dump.sql" ]; then
-                sudo -u postgres psql < "$backup_dir/database_dumps/postgresql_dump.sql"
-            fi
-        fi
-        
-        if [ -d "$backup_dir/system_logs" ] && confirm "Restore system logs?"; then
-            sudo rsync -avh --delete "$backup_dir/system_logs/" /var/log/
-        fi
+    "disk_image")
+        restore_disk_image "$backup_dir/image/disk-image.img"
         ;;
-    *)
-        echo "Invalid choice. Exiting."
-        exit 1
+    "borg")
+        read -p "Enter the path to restore Borg backup: " restore_path
+        restore_borg_backup "$backup_dir/borg_repo" "$restore_path"
         ;;
 esac
 
