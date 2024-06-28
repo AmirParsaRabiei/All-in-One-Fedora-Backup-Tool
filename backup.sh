@@ -60,11 +60,12 @@ echo "Backup location: $backup_dir"
 # Function to prompt for user confirmation
 confirm() {
     while true; do
-        read -p "$1 (Y/n, default is Y): " yn
+        read -p "$1 (Y/n/A, default is Y): " yn
         case $yn in
             [Yy]* | "" ) return 0;;
             [Nn]* ) return 1;;
-            * ) echo "Please answer yes or no.";;
+            [Aa]* ) return 2;;
+            * ) echo "Please answer yes, no, or all.";;
         esac
     done
 }
@@ -87,13 +88,21 @@ start_time=$(date +%s)
 
 if [ "$backup_type" == "1" ]; then
     # Manual backup
+    yes_to_all=0
+    confirm_all=0
 
     # System configuration files
     if [ -z "$etc_done" ]; then
         if [ -d "$backup_dir/etc" ]; then
             echo "Backup for /etc already exists. Skipping."
         else
-            if confirm "Do you want to back up system configuration files (/etc)?"; then
+            if [ $yes_to_all -eq 0 ]; then
+                confirm_all=$(confirm "Do you want to back up system configuration files (/etc)?")
+                if [ $confirm_all -eq 2 ]; then
+                    yes_to_all=1
+                fi
+            fi
+            if [ $yes_to_all -eq 1 ] || [ $confirm_all -eq 0 ]; then
                 section_start_time=$(date +%s)
                 sudo rsync -avh --partial --partial-dir="$backup_dir/partial" --progress /etc "$backup_dir/etc/"
                 section_end_time=$(date +%s)
@@ -108,7 +117,13 @@ if [ "$backup_type" == "1" ]; then
         if [ -d "$backup_dir/config" ]; then
             echo "Backup for ~/.config already exists. Skipping."
         else
-            if confirm "Do you want to back up user-specific configuration files (~/.config)?"; then
+            if [ $yes_to_all -eq 0 ]; then
+                confirm_all=$(confirm "Do you want to back up user-specific configuration files (~/.config)?")
+                if [ $confirm_all -eq 2 ]; then
+                    yes_to_all=1
+                fi
+            fi
+            if [ $yes_to_all -eq 1 ] || [ $confirm_all -eq 0 ]; then
                 section_start_time=$(date +%s)
                 sudo rsync -avh --partial --partial-dir="$backup_dir/partial" --progress /home/$USER/.config "$backup_dir/config/"
                 section_end_time=$(date +%s)
@@ -123,7 +138,13 @@ if [ "$backup_type" == "1" ]; then
         if [ -d "$backup_dir/home" ]; then
             echo "Backup for /home/$USER already exists. Skipping."
         else
-            if confirm "Do you want to back up the home directory (/home/$USER)?"; then
+            if [ $yes_to_all -eq 0 ]; then
+                confirm_all=$(confirm "Do you want to back up the home directory (/home/$USER)?")
+                if [ $confirm_all -eq 2 ]; then
+                    yes_to_all=1
+                fi
+            fi
+            if [ $yes_to_all -eq 1 ] || [ $confirm_all -eq 0 ]; then
                 section_start_time=$(date +%s)
                 sudo rsync -avh --partial --partial-dir="$backup_dir/partial" --progress /home/$USER "$backup_dir/home/"
                 section_end_time=$(date +%s)
@@ -138,7 +159,13 @@ if [ "$backup_type" == "1" ]; then
         if [ -d "$backup_dir/mozilla" ]; then
             echo "Backup for ~/.mozilla already exists. Skipping."
         else
-            if confirm "Do you want to back up Firefox data (~/.mozilla)?"; then
+            if [ $yes_to_all -eq 0 ]; then
+                confirm_all=$(confirm "Do you want to back up Firefox data (~/.mozilla)?")
+                if [ $confirm_all -eq 2 ]; then
+                    yes_to_all=1
+                fi
+            fi
+            if [ $yes_to_all -eq 1 ] || [ $confirm_all -eq 0 ]; then
                 section_start_time=$(date +%s)
                 sudo rsync -avh --partial --partial-dir="$backup_dir/partial" --progress ~/.mozilla "$backup_dir/mozilla/"
                 section_end_time=$(date +%s)
@@ -152,7 +179,13 @@ if [ "$backup_type" == "1" ]; then
         if [ -d "$backup_dir/google-chrome" ]; then
             echo "Backup for ~/.config/google-chrome already exists. Skipping."
         else
-            if confirm "Do you want to back up Chrome data (~/.config/google-chrome)?"; then
+            if [ $yes_to_all -eq 0 ]; then
+                confirm_all=$(confirm "Do you want to back up Chrome data (~/.config/google-chrome)?")
+                if [ $confirm_all -eq 2 ]; then
+                    yes_to_all=1
+                fi
+            fi
+            if [ $yes_to_all -eq 1 ] || [ $confirm_all -eq 0 ]; then
                 section_start_time=$(date +%s)
                 sudo rsync -avh --partial --partial-dir="$backup_dir/partial" --progress ~/.config/google-chrome "$backup_dir/google-chrome/"
                 section_end_time=$(date +%s)
@@ -166,7 +199,13 @@ if [ "$backup_type" == "1" ]; then
         if [ -d "$backup_dir/microsoft-edge" ]; then
             echo "Backup for ~/.config/microsoft-edge already exists. Skipping."
         else
-            if confirm "Do you want to back up Edge data (~/.config/microsoft-edge)?"; then
+            if [ $yes_to_all -eq 0 ]; then
+                confirm_all=$(confirm "Do you want to back up Edge data (~/.config/microsoft-edge)?")
+                if [ $confirm_all -eq 2 ]; then
+                    yes_to_all=1
+                fi
+            fi
+            if [ $yes_to_all -eq 1 ] || [ $confirm_all -eq 0 ]; then
                 section_start_time=$(date +%s)
                 sudo rsync -avh --partial --partial-dir="$backup_dir/partial" --progress ~/.config/microsoft-edge "$backup_dir/microsoft-edge/"
                 section_end_time=$(date +%s)
@@ -181,7 +220,13 @@ if [ "$backup_type" == "1" ]; then
         if [ -d "$backup_dir/gnome-extensions" ]; then
             echo "Backup for GNOME extensions already exists. Skipping."
         else
-            if confirm "Do you want to back up GNOME extensions (~/.local/share/gnome-shell/extensions)?"; then
+            if [ $yes_to_all -eq 0 ]; then
+                confirm_all=$(confirm "Do you want to back up GNOME extensions (~/.local/share/gnome-shell/extensions)?")
+                if [ $confirm_all -eq 2 ]; then
+                    yes_to_all=1
+                fi
+            fi
+            if [ $yes_to_all -eq 1 ] || [ $confirm_all -eq 0 ]; then
                 section_start_time=$(date +%s)
                 sudo rsync -avh --partial --partial-dir="$backup_dir/partial" --progress ~/.local/share/gnome-shell/extensions "$backup_dir/gnome-extensions/"
                 sudo rsync -avh --partial --partial-dir="$backup_dir/partial" --progress /usr/share/gnome-shell/extensions "$backup_dir/gnome-extensions/system"
@@ -197,7 +242,13 @@ if [ "$backup_type" == "1" ]; then
         if [ -f "$backup_dir/rpm-packages-list.txt" ]; then
             echo "Backup for installed packages list already exists. Skipping."
         else
-            if confirm "Do you want to back up the list of installed packages?"; then
+            if [ $yes_to_all -eq 0 ]; then
+                confirm_all=$(confirm "Do you want to back up the list of installed packages?")
+                if [ $confirm_all -eq 2 ]; then
+                    yes_to_all=1
+                fi
+            fi
+            if [ $yes_to_all -eq 1 ] || [ $confirm_all -eq 0 ]; then
                 section_start_time=$(date +%s)
                 sudo dnf list installed > "$backup_dir/rpm-packages-list.txt"
                 flatpak list --app > "$backup_dir/flatpak-apps-list.txt"
@@ -213,7 +264,13 @@ if [ "$backup_type" == "1" ]; then
         if [ -f "$backup_dir/requirements.txt" ]; then
             echo "Backup for pip packages already exists. Skipping."
         else
-            if confirm "Do you want to back up pip packages?"; then
+            if [ $yes_to_all -eq 0 ]; then
+                confirm_all=$(confirm "Do you want to back up pip packages?")
+                if [ $confirm_all -eq 2 ]; then
+                    yes_to_all=1
+                fi
+            fi
+            if [ $yes_to_all -eq 1 ] || [ $confirm_all -eq 0 ]; then
                 section_start_time=$(date +%s)
                 pip freeze > "$backup_dir/requirements.txt"
                 section_end_time=$(date +%s)
