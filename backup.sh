@@ -139,7 +139,7 @@ log_section_report() {
 echo "Choose backup type:"
 echo "1) Manual backup"
 echo "2) Disk image"
-echo "3) Borg backup"
+echo "3) Borg backup(Completed/Compressed/Encrypted)"
 read -p "Enter choice [1-3]: " backup_type
 
 start_time=$(date +%s)
@@ -527,20 +527,20 @@ elif [ "$backup_type" == "3" ]; then
             borg init --encryption=repokey "$borg_repo"
         fi
 
-        # Create Borg backup
-        echo "Creating Borg backup..."
+        # Create Borg backup with LZ4 compression
+        echo "Creating Borg backup with LZ4 compression..."
         section_start_time=$(date +%s)
 
-        if borg create --progress --stats --checkpoint-interval 300 \
+        if borg create --progress --stats --compression lz4 --checkpoint-interval 300 \
             "$borg_repo::backup-{now}" \
             /etc \
-            /var \
+            /var/lib \
             /opt \
             "$HOME/.config" \
             "$HOME"; then
-            echo "Borg backup created successfully."
+            echo "Borg backup created successfully with LZ4 compression."
             section_end_time=$(date +%s)
-            log_section_report "Borg backup" $section_start_time $section_end_time
+            log_section_report "Borg backup with LZ4 compression" $section_start_time $section_end_time
             log_state "borg"
         else
             handle_error "Failed to create Borg backup"
