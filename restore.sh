@@ -181,6 +181,6 @@ case $backup_type in
         restore_borg_backup "$backup_dir/borg_repo" "$restore_path"
         ;;
 esac
-
+ 
 echo "Restore process completed."
 echo "Please reboot your system to ensure all changes take effect."
