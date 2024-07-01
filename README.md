@@ -2,10 +2,8 @@
 A comprehensive script to back up your Fedora system configuration files, user-specific configuration files, home directory, browser data, GNOME extensions, installed packages, and more. Easily create and restore backups with user prompts and selective backup options.
 
 Todo : 
-- add restore script
-- edge cache
-- update backups script
-
+- improve restore script
+- add support
 
 ### Summary
 

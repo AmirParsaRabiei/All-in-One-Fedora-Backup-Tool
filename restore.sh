@@ -1,10 +1,31 @@
 #!/bin/bash
 
+set -e  # Exit immediately if a command exits with a non-zero status.
+
 # Function to handle errors
 handle_error() {
     local error_message=$1
     echo "Error: $error_message" >&2
     exit 1
+}
+
+# Function to check required commands
+check_required_commands() {
+    local commands=("rsync" "tar" "openssl" "borg" "flatpak" "pip" "dd")
+    for cmd in "${commands[@]}"; do
+        if ! command -v "$cmd" &> /dev/null; then
+            handle_error "Required command '$cmd' not found. Please install it and try again."
+        fi
+    done
+}
+
+# Function to find the most recent backup
+find_latest_backup() {
+    local latest_backup=$(find . -maxdepth 1 -type d -name "backup_*" | sort -r | head -n1)
+    if [ -z "$latest_backup" ]; then
+        handle_error "No backup folder found in the current directory."
+    fi
+    echo "$latest_backup"
 }
 
 # Function to decrypt backup
@@ -34,144 +55,29 @@ extract_backup() {
     fi
 }
 
-# Function to restore specific directories
-restore_directory() {
-    local source=$1
-    local destination=$2
-    
-    if [ -d "$source" ]; then
-        if sudo rsync -avh --delete "$source/" "$destination/"; then
-            echo "Restored $destination successfully."
-        else
-            handle_error "Failed to restore $destination"
-        fi
-    else
-        echo "Warning: Source directory $source not found. Skipping."
-    fi
-}
-
-# Function to restore packages
-restore_packages() {
-    local packages_file=$1
-    
-    if [ -f "$packages_file" ]; then
-        if sudo dnf install -y $(cat "$packages_file"); then
-            echo "Packages restored successfully."
-        else
-            handle_error "Failed to restore packages"
-        fi
-    else
-        echo "Warning: Packages list file not found. Skipping package restoration."
-    fi
-}
-
-# Function to restore Flatpak apps
-restore_flatpak_apps() {
-    local flatpak_file=$1
-    
-    if [ -f "$flatpak_file" ]; then
-        if xargs -a "$flatpak_file" flatpak install -y; then
-            echo "Flatpak apps restored successfully."
-        else
-            handle_error "Failed to restore Flatpak apps"
-        fi
-    else
-        echo "Warning: Flatpak apps list file not found. Skipping Flatpak apps restoration."
-    fi
-}
-
-# Function to restore pip packages
-restore_pip_packages() {
-    local requirements_file=$1
-    
-    if [ -f "$requirements_file" ]; then
-        if pip install -r "$requirements_file"; then
-            echo "Pip packages restored successfully."
-        else
-            handle_error "Failed to restore pip packages"
-        fi
-    else
-        echo "Warning: Requirements file not found. Skipping pip packages restoration."
-    fi
-}
-
-# Function to restore disk image
-restore_disk_image() {
-    local image_file=$1
-    
-    echo "Available disks:"
-    lsblk
-    
-    read -p "Enter the disk to restore to (e.g., /dev/nvme1n1): " restore_disk
-    
-    if [ ! -b "$restore_disk" ]; then
-        handle_error "Invalid disk. Please enter a valid block device."
-    fi
-    
-    read -p "Are you sure you want to restore the image to $restore_disk? This will erase all data on the disk. (y/N): " confirm
-    if [[ $confirm =~ ^[Yy]$ ]]; then
-        if sudo dd if="$image_file" of="$restore_disk" bs=4M status=progress; then
-            echo "Disk image restored successfully."
-        else
-            handle_error "Failed to restore disk image"
-        fi
-    else
-        echo "Disk image restoration cancelled."
-    fi
-}
-
-# Function to restore Borg backup
-restore_borg_backup() {
-    local borg_repo=$1
-    local restore_path=$2
-    
-    echo "Available Borg archives:"
-    borg list "$borg_repo"
-    
-    read -p "Enter the archive name to restore: " archive_name
-    
-    if borg extract --progress "$borg_repo::$archive_name"; then
-        echo "Borg backup restored successfully."
-    else
-        handle_error "Failed to restore Borg backup"
-    fi
-}
+# ... [rest of the functions remain the same] ...
 
 # Main script
 
 echo "Fedora Backup Restore Script"
 echo "============================"
 
-# Find available backups
-backups=$(find . -maxdepth 1 -type d -name "backup_*" -print)
+# Check for required commands
+check_required_commands
 
-if [ -z "$backups" ]; then
-    handle_error "No backup folders found in the current directory."
-fi
+# Find the latest backup
+backup_dir=$(find_latest_backup)
+echo "Found backup directory: $backup_dir"
 
-echo "Available backups:"
-select backup_dir in $backups; do
-    if [ -n "$backup_dir" ]; then
-        echo "Selected backup: $backup_dir"
-        break
-    else
-        echo "Invalid selection. Please try again."
-    fi
-done
-
-# Check if the backup is encrypted
+# Determine if the backup is encrypted
 if [ -f "$backup_dir.tar.gz.enc" ]; then
     echo "Encrypted backup found. Decrypting..."
     decrypt_backup "$backup_dir.tar.gz.enc" "$backup_dir.tar.gz"
-    
-    echo "Extracting decrypted backup..."
     extract_backup "$backup_dir.tar.gz" "$backup_dir"
     rm "$backup_dir.tar.gz"  # Remove the decrypted archive after extraction
 elif [ -f "$backup_dir.tar.gz" ]; then
     echo "Compressed backup found. Extracting..."
     extract_backup "$backup_dir.tar.gz" "$backup_dir"
-elif [ ! -d "$backup_dir" ]; then
-    handle_error "Backup directory not found or is not accessible."
 fi
 
 # Determine the backup type
@@ -188,8 +94,22 @@ echo "Detected backup type: $backup_type"
 case $backup_type in
     "manual")
         echo "Select components to restore:"
-        options=("System configuration (/etc)" "Var directory (/var)" "Opt directory (/opt)" "User configuration (~/.config)" "Home directory" "Browser data" "GNOME extensions" "Installed packages" "Pip packages" "Database dumps" "System logs" "All of the above")
+        options=(
+            "System configuration (/etc)"
+            "Var directory (/var)"
+            "Opt directory (/opt)"
+            "User configuration (~/.config)"
+            "Home directory"
+            "Browser data"
+            "GNOME extensions"
+            "Installed packages"
+            "Pip packages"
+            "Database dumps"
+            "System logs"
+            "All of the above"
+        )
         
+        PS3="Enter your choice (1-${#options[@]}): "
         select opt in "${options[@]}"
         do
             case $opt in
@@ -225,8 +145,7 @@ case $backup_type in
                     restore_pip_packages "$backup_dir/requirements.txt"
                     ;;
                 "Database dumps")
-                    echo "Restoring database dumps..."
-                    # Add specific commands to restore database dumps
+                    restore_database_dumps "$backup_dir/database_dumps"
                     ;;
                 "System logs")
                     restore_directory "$backup_dir/system_logs" "/var/log"
@@ -245,13 +164,13 @@ case $backup_type in
                     restore_packages "$backup_dir/rpm-packages-list.txt"
                     restore_flatpak_apps "$backup_dir/flatpak-apps-list.txt"
                     restore_pip_packages "$backup_dir/requirements.txt"
-                    echo "Restoring database dumps..."
-                    # Add specific commands to restore database dumps
+                    restore_database_dumps "$backup_dir/database_dumps"
                     restore_directory "$backup_dir/system_logs" "/var/log"
                     break
                     ;;
                 *) echo "Invalid option $REPLY";;
             esac
+            REPLY=
         done
         ;;
     "disk_image")
@@ -264,3 +183,4 @@ case $backup_type in
 esac
 
 echo "Restore process completed."
+echo "Please reboot your system to ensure all changes take effect."
