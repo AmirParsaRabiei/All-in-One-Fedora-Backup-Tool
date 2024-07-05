@@ -19,11 +19,26 @@ handle_error() {
 
 # Function to verify backup integrity
 verify_backup() {
-    echo "Verifying backup integrity..."
-    if tar -tvf "$backup_dir/backup.tar.gz" > /dev/null 2>&1; then
-        echo "Backup verified successfully."
+    if [ "$backup_type" == "3" ]; then
+        echo "Verifying Borg backup..."
+        if borg check "$borg_repo"; then
+            echo "Borg backup verification successful."
+        else
+            echo "Borg backup verification failed. Please check the repository manually."
+        fi
     else
-        echo "Error: Backup verification failed."
+        echo "Verifying backup integrity..."
+        if [ -f "$backup_dir.tar.gz" ]; then
+            if tar -tvf "$backup_dir.tar.gz" > /dev/null 2>&1; then
+                echo "Backup verified successfully."
+            else
+                echo "Error: Backup verification failed."
+            fi
+        elif [ -f "$backup_dir.tar.gz.enc" ]; then
+            echo "Backup is encrypted. Decryption required before verification."
+        else
+            echo "Error: Backup archive not found."
+        fi
     fi
 }
 
@@ -633,6 +648,14 @@ verify_backup() {
         fi
     fi
 }
+
+# Main backup process
+case $backup_type in
+    1) manual_backup ;;
+    2) disk_image_backup ;;
+    3) borg_backup ;;
+    *) echo "Invalid choice. Exiting."; exit 1 ;;
+esac
 
 verify_backup
 
