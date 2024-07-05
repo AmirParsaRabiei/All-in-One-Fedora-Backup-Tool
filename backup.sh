@@ -174,13 +174,13 @@ if [ "$backup_type" == "1" ]; then
         fi
     fi
 
-    # Backup /var
-    if [ -z "$var_done" ]; then
-        if [ -d "$backup_dir/var" ]; then
-            echo "Backup for /var already exists. Skipping."
+    # Backup /var/lib
+    if [ -z "$var_lib_done" ]; then
+        if [ -d "$backup_dir/var_lib" ]; then
+            echo "Backup for /var/lib already exists. Skipping."
         else
             if [ "$yes_to_all" -eq 0 ]; then
-                confirm "Do you want to back up /var?"
+                confirm "Do you want to back up /var/lib?"
                 confirm_all=$?
                 if [ "$confirm_all" -eq 2 ]; then
                     yes_to_all=1
@@ -188,12 +188,12 @@ if [ "$backup_type" == "1" ]; then
             fi
             if [ "$yes_to_all" -eq 1 ] || [ "$confirm_all" -eq 0 ]; then
                 section_start_time=$(date +%s)
-                if sudo rsync -avh --partial --partial-dir="$backup_dir/partial" --progress /var "$backup_dir/var/"; then
+                if sudo rsync -avh --partial --partial-dir="$backup_dir/partial" --progress /var/lib "$backup_dir/var_lib/"; then
                     section_end_time=$(date +%s)
-                    log_section_report "Var directory (/var)" $section_start_time $section_end_time
-                    log_state "var"
+                    log_section_report "Var lib directory (/var/lib)" $section_start_time $section_end_time
+                    log_state "var_lib"
                 else
-                    handle_error "Failed to backup /var"
+                    handle_error "Failed to backup /var/lib"
                 fi
             fi
         fi

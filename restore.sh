@@ -96,7 +96,7 @@ case $backup_type in
         echo "Select components to restore:"
         options=(
             "System configuration (/etc)"
-            "Var directory (/var)"
+            "Var lib directory (/var/lib)"
             "Opt directory (/opt)"
             "User configuration (~/.config)"
             "Home directory"
@@ -116,8 +116,8 @@ case $backup_type in
                 "System configuration (/etc)")
                     restore_directory "$backup_dir/etc" "/etc"
                     ;;
-                "Var directory (/var)")
-                    restore_directory "$backup_dir/var" "/var"
+                "Var lib directory (/var/lib)")
+                    restore_directory "$backup_dir/var_lib" "/var/lib"
                     ;;
                 "Opt directory (/opt)")
                     restore_directory "$backup_dir/opt" "/opt"
@@ -152,7 +152,7 @@ case $backup_type in
                     ;;
                 "All of the above")
                     restore_directory "$backup_dir/etc" "/etc"
-                    restore_directory "$backup_dir/var" "/var"
+                    restore_directory "$backup_dir/var_lib" "/var/lib"
                     restore_directory "$backup_dir/opt" "/opt"
                     restore_directory "$backup_dir/config" "$HOME/.config"
                     restore_directory "$backup_dir/home" "$HOME"
