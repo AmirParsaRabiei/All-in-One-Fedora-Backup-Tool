@@ -550,66 +550,89 @@ elif [ "$backup_type" == "3" ]; then
         echo "Pruning old backups..."
         borg prune --keep-daily 7 --keep-weekly 4 --keep-monthly 6 "$borg_repo"
 
-        # Verify the backup
-        echo "Verifying Borg backup..."
-        borg check "$borg_repo"
+        # Ask user if they want to verify the backup
+        if confirm "Do you want to verify the Borg backup?"; then
+            echo "Verifying Borg backup..."
+            if borg check "$borg_repo"; then
+                echo "Borg backup verification successful."
+            else
+                echo "Borg backup verification failed. Please check the repository manually."
+            fi
+        fi
     fi
 else
     echo "Invalid choice. Exiting."
     exit 1
 fi
 
-# Compress the backup
-if [ -z "$compress_done" ]; then
-    if confirm "Do you want to compress the backup?"; then
-        section_start_time=$(date +%s)
-        echo "Compressing the backup..."
-        
-        if tar -czf "$backup_dir.tar.gz" -C "$backup_dir" .; then
-            echo "Backup compressed successfully."
-            section_end_time=$(date +%s)
-            log_section_report "Compressing the backup" $section_start_time $section_end_time
-            log_state "compress"
-        else
-            handle_error "Failed to compress the backup"
+# Remove compression and encryption steps for Borg backup
+if [ "$backup_type" != "3" ]; then
+    # Compress the backup
+    if [ -z "$compress_done" ]; then
+        if confirm "Do you want to compress the backup?"; then
+            section_start_time=$(date +%s)
+            echo "Compressing the backup..."
+            
+            if tar -czf "$backup_dir.tar.gz" -C "$backup_dir" .; then
+                echo "Backup compressed successfully."
+                section_end_time=$(date +%s)
+                log_section_report "Compressing the backup" $section_start_time $section_end_time
+                log_state "compress"
+            else
+                handle_error "Failed to compress the backup"
+            fi
+        fi
+    fi
+
+    # Encrypt the backup
+    if [ -z "$encrypt_done" ]; then
+        if confirm "Do you want to encrypt the backup?"; then
+            section_start_time=$(date +%s)
+            echo "Encrypting the backup..."
+            
+            # Prompt for password
+            read -s -p "Enter encryption password: " passphrase
+            echo
+            read -s -p "Confirm encryption password: " passphrase_confirm
+            echo
+
+            # Verify passwords match
+            if [ "$passphrase" != "$passphrase_confirm" ]; then
+                echo "Error: Passwords do not match. Encryption aborted."
+                exit 1
+            fi
+            
+            # Encrypt the compressed backup
+            if openssl enc -aes-256-cbc -salt -in "$backup_dir.tar.gz" -out "$backup_dir.tar.gz.enc" -pass pass:"$passphrase"; then
+                echo "Backup encrypted successfully."
+                echo "IMPORTANT: Remember your encryption password. You will need it to decrypt the backup."
+                
+                section_end_time=$(date +%s)
+                log_section_report "Encrypting the backup" $section_start_time $section_end_time
+                log_state "encrypt"
+                
+                # Remove the unencrypted compressed file
+                rm "$backup_dir.tar.gz"
+            else
+                handle_error "Failed to encrypt the backup"
+            fi
         fi
     fi
 fi
 
-# Encrypt the backup
-if [ -z "$encrypt_done" ]; then
-    if confirm "Do you want to encrypt the backup?"; then
-        section_start_time=$(date +%s)
-        echo "Encrypting the backup..."
-        
-        # Prompt for password
-        read -s -p "Enter encryption password: " passphrase
-        echo
-        read -s -p "Confirm encryption password: " passphrase_confirm
-        echo
-
-        # Verify passwords match
-        if [ "$passphrase" != "$passphrase_confirm" ]; then
-            echo "Error: Passwords do not match. Encryption aborted."
-            exit 1
-        fi
-        
-        # Encrypt the compressed backup
-        if openssl enc -aes-256-cbc -salt -in "$backup_dir.tar.gz" -out "$backup_dir.tar.gz.enc" -pass pass:"$passphrase"; then
-            echo "Backup encrypted successfully."
-            echo "IMPORTANT: Remember your encryption password. You will need it to decrypt the backup."
-            
-            section_end_time=$(date +%s)
-            log_section_report "Encrypting the backup" $section_start_time $section_end_time
-            log_state "encrypt"
-            
-            # Remove the unencrypted compressed file
-            rm "$backup_dir.tar.gz"
+# Modified verify_backup function
+verify_backup() {
+    if [ "$backup_type" == "3" ]; then
+        echo "Borg backup does not require additional verification."
+    else
+        echo "Verifying backup integrity..."
+        if tar -tvf "$backup_dir/backup.tar.gz" > /dev/null 2>&1; then
+            echo "Backup verified successfully."
         else
-            handle_error "Failed to encrypt the backup"
+            echo "Error: Backup verification failed."
         fi
     fi
-fi
+}
 
 verify_backup
 
@@ -625,5 +648,13 @@ cat "$backup_dir/backup_report.txt"
 # Clean up temporary files and directories
 rm -rf "$backup_dir/partial"
 
-echo "Backup process finished. Your encrypted backup is stored at $backup_dir.tar.gz.enc"
-echo "Remember to securely store your encryption passphrase!"
+if [ "$backup_type" == "3" ]; then
+    echo "Backup process finished. Your Borg backup is stored at $borg_repo"
+    echo "Use 'borg list $borg_repo' to see available archives."
+else
+    echo "Backup process finished. Your backup is stored at $backup_dir"
+    if [ -f "$backup_dir.tar.gz.enc" ]; then
+        echo "Your encrypted backup is stored at $backup_dir.tar.gz.enc"
+        echo "Remember to securely store your encryption passphrase!"
+    fi
+fi
