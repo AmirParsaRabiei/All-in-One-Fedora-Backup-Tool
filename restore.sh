@@ -11,7 +11,7 @@ handle_error() {
 
 # Function to check required commands
 check_required_commands() {
-    local commands=("rsync" "tar" "openssl" "borg" "flatpak" "pip" "dd")
+    local commands=("rsync" "tar" "openssl" "borg" "flatpak" "pip" "dd" "gzip" "dnf" "ddrescue" "cmp")
     for cmd in "${commands[@]}"; do
         if ! command -v "$cmd" &> /dev/null; then
             handle_error "Required command '$cmd' not found. Please install it and try again."
@@ -55,7 +55,120 @@ extract_backup() {
     fi
 }
 
-# ... [rest of the functions remain the same] ...
+# Function to restore directory
+restore_directory() {
+    local source=$1
+    local destination=$2
+    
+    if sudo rsync -avh --delete "$source/" "$destination"; then
+        echo "Directory $destination restored successfully."
+    else
+        handle_error "Failed to restore directory $destination"
+    fi
+}
+
+# Function to restore packages
+restore_packages() {
+    local package_list=$1
+    
+    if sudo dnf install -y $(cat "$package_list"); then
+        echo "Packages restored successfully."
+    else
+        handle_error "Failed to restore packages"
+    fi
+}
+
+# Function to restore Flatpak apps
+restore_flatpak_apps() {
+    local flatpak_list=$1
+    
+    if xargs -a "$flatpak_list" flatpak install -y; then
+        echo "Flatpak apps restored successfully."
+    else
+        handle_error "Failed to restore Flatpak apps"
+    fi
+}
+
+# Function to restore pip packages
+restore_pip_packages() {
+    local requirements_file=$1
+    
+    if pip install -r "$requirements_file"; then
+        echo "Pip packages restored successfully."
+    else
+        handle_error "Failed to restore pip packages"
+    fi
+}
+
+# Function to restore database dumps
+restore_database_dumps() {
+    local dump_dir=$1
+    
+    # MySQL/MariaDB
+    if [ -f "$dump_dir/mysql_dump.sql" ]; then
+        if sudo mysql < "$dump_dir/mysql_dump.sql"; then
+            echo "MySQL/MariaDB dump restored successfully."
+        else
+            handle_error "Failed to restore MySQL/MariaDB dump"
+        fi
+    fi
+    
+    # PostgreSQL
+    if [ -f "$dump_dir/postgresql_dump.sql" ]; then
+        if sudo -u postgres psql < "$dump_dir/postgresql_dump.sql"; then
+            echo "PostgreSQL dump restored successfully."
+        else
+            handle_error "Failed to restore PostgreSQL dump"
+        fi
+    fi
+}
+
+# Function to restore disk image
+restore_disk_image() {
+    local image_file=$1
+    
+    echo "Available disks:"
+    lsblk
+    
+    read -p "Enter the disk to restore to (e.g., /dev/sda): " target_disk
+    
+    if [ ! -b "$target_disk" ]; then
+        handle_error "Invalid disk. Please enter a valid block device."
+    fi
+    
+    if confirm "Are you sure you want to restore the disk image to $target_disk? This will erase all data on the disk."; then
+        if sudo ddrescue -f "$image_file" "$target_disk"; then
+            echo "Disk image restored successfully."
+        else
+            handle_error "Failed to restore disk image"
+        fi
+    fi
+}
+
+# Function to restore Borg backup
+restore_borg_backup() {
+    local repo_path=$1
+    local restore_path=$2
+    
+    if borg extract "$repo_path::$(borg list "$repo_path" | tail -n1 | cut -d' ' -f1)" "$restore_path"; then
+        echo "Borg backup restored successfully to $restore_path."
+    else
+        handle_error "Failed to restore Borg backup"
+    fi
+}
+
+# Function to confirm action
+confirm() {
+    read -p "$1 (y/N): " response
+    case "$response" in
+        [yY][eE][sS]|[yY]) 
+            return 0
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+}
 
 # Main script
 
@@ -83,7 +196,7 @@ fi
 # Determine the backup type
 if [ -d "$backup_dir/borg_repo" ]; then
     backup_type="borg"
-elif [ -f "$backup_dir/image/disk-image.img" ]; then
+elif [ -d "$backup_dir/image" ]; then
     backup_type="disk_image"
 else
     backup_type="manual"
@@ -174,13 +287,32 @@ case $backup_type in
         done
         ;;
     "disk_image")
-        restore_disk_image "$backup_dir/image/disk-image.img"
+        if [ -f "$backup_dir/image/disk-image.img" ]; then
+            restore_disk_image "$backup_dir/image/disk-image.img"
+        elif [ -f "$backup_dir/image/disk-image.gz" ]; then
+            echo "Compressed disk image found. Decompressing..."
+            gunzip -c "$backup_dir/image/disk-image.gz" > "$backup_dir/image/disk-image.img"
+            restore_disk_image "$backup_dir/image/disk-image.img"
+            rm "$backup_dir/image/disk-image.img"
+        elif [ -f "$backup_dir/image/disk-image.gz.part-aa" ]; then
+            echo "Split compressed disk image found. Reassembling and decompressing..."
+            cat "$backup_dir/image/disk-image.gz.part-"* | gunzip -c > "$backup_dir/image/disk-image.img"
+            restore_disk_image "$backup_dir/image/disk-image.img"
+            rm "$backup_dir/image/disk-image.img"
+        elif [ -f "$backup_dir/image/disk-image.part-aa" ]; then
+            echo "Split disk image found. Reassembling..."
+            cat "$backup_dir/image/disk-image.part-"* > "$backup_dir/image/disk-image.img"
+            restore_disk_image "$backup_dir/image/disk-image.img"
+            rm "$backup_dir/image/disk-image.img"
+        else
+            handle_error "No valid disk image found in the backup"
+        fi
         ;;
     "borg")
         read -p "Enter the path to restore Borg backup: " restore_path
         restore_borg_backup "$backup_dir/borg_repo" "$restore_path"
         ;;
 esac
- 
+
 echo "Restore process completed."
 echo "Please reboot your system to ensure all changes take effect."
