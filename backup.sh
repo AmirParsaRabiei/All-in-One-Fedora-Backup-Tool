@@ -660,10 +660,7 @@ elif [ "$backup_type" == "3" ]; then
 
         if borg create --progress --stats --compression lz4 --checkpoint-interval 300 \
             "$borg_repo::backup-{now}" \
-            /etc \
-            /var/lib \
-            /opt \
-            "$HOME/.config" \
+            /var/lib/docker \
             "$HOME"; then
             echo "Borg backup created successfully with LZ4 compression."
             section_end_time=$(date +%s)
