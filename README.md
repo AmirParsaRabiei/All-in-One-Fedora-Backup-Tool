@@ -3,11 +3,16 @@
 This project provides comprehensive backup and restore scripts for Fedora systems. These scripts allow you to create full system backups, including system configurations, user data, installed packages, and more. They also provide options for restoring your system from these backups.
 
 ## TODO
-- The script is quite long and complex. Consider breaking it down into smaller, modular functions for easier maintenance.
-- Add more comments throughout the script to explain what each section does.
-- Consider adding a dry-run option to show what would be backed up without actually performing the backup.
-- Implement a more robust logging system, possibly writing to a separate log file in addition to the console output.
-- Edit restore script
+1. Add more error checking and validation.
+2. Implement logging throughout the script for better debugging.
+3. Consider using getopts for command-line argument parsing to make the script more flexible.
+4. Create a configuration file to store default values and paths.
+5. Implement a dry-run option to show what would be backed up without actually performing the backup.
+6. Add a progress bar or more detailed progress information for long-running operations.
+7. Implement parallel processing for some operations to speed up the backup process.
+8. Add a restore function to make it easier to recover from backups.
+9. Implement a more robust state management system to allow for easier resumption of interrupted backups.
+10. Add support for remote backups (e.g., to a network drive or cloud storage).
 
 ## Features
 
