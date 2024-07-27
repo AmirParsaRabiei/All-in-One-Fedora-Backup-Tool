@@ -10,11 +10,12 @@ check_disk_space() {
     fi
 }
 
-# Function to handle errors
+# Improved error handling function
 handle_error() {
     local error_message=$1
     echo "Error: $error_message" >> "$backup_dir/error.log"
     echo "Error occurred. Check $backup_dir/error.log for details."
+    exit 1  # Exit the script on error
 }
 
 # Function to verify backup integrity
@@ -24,23 +25,57 @@ verify_backup() {
         if borg check "$borg_repo"; then
             echo "Borg backup verification successful."
         else
-            echo "Borg backup verification failed. Please check the repository manually."
+            handle_error "Borg backup verification failed. Please check the repository manually."
         fi
     else
         echo "Verifying backup integrity..."
         if [ -f "$backup_dir.tar.gz" ]; then
-            if tar -tvf "$backup_dir.tar.gz" > /dev/null 2>&1; then
-                echo "Backup verified successfully."
+            # Improved verification: Check file count and perform checksum
+            local original_file_count=$(find "$backup_dir" -type f | wc -l)
+            local archive_file_count=$(tar -tvf "$backup_dir.tar.gz" | wc -l)
+            
+            if [ "$original_file_count" -eq "$archive_file_count" ]; then
+                echo "File count matches. Verifying checksums..."
+                if tar -xOf "$backup_dir.tar.gz" | md5sum -c "$backup_dir/checksum.md5"; then
+                    echo "Backup verified successfully."
+                else
+                    handle_error "Backup verification failed: Checksum mismatch."
+                fi
             else
-                echo "Error: Backup verification failed."
+                handle_error "Backup verification failed: File count mismatch."
             fi
         elif [ -f "$backup_dir.tar.gz.enc" ]; then
             echo "Backup is encrypted. Decryption required before verification."
         else
-            echo "Error: Backup archive not found."
+            handle_error "Backup archive not found."
         fi
     fi
 }
+
+# Function for incremental backups
+perform_incremental_backup() {
+    local source_dir=$1
+    local dest_dir=$2
+    local snapshot_dir="$backup_dir/snapshots"
+
+    # Create snapshot directory if it doesn't exist
+    mkdir -p "$snapshot_dir"
+
+    # Find the most recent snapshot
+    local latest_snapshot=$(ls -t "$snapshot_dir" | head -n1)
+
+    if [ -n "$latest_snapshot" ]; then
+        # Perform incremental backup
+        rsync -av --delete --link-dest="$snapshot_dir/$latest_snapshot" "$source_dir" "$dest_dir"
+    else
+        # Perform full backup if no previous snapshot exists
+        rsync -av "$source_dir" "$dest_dir"
+    fi
+
+    # Create a new snapshot
+    cp -al "$dest_dir" "$snapshot_dir/$(date +%Y%m%d_%H%M%S)"
+}
+
 
 # Check for required packages and install if missing
 required_packages=(rsync dd gzip dnf flatpak pip openssl borg)
@@ -506,8 +541,8 @@ if [ "$backup_type" == "1" ]; then
     fi
 
 elif [ "$backup_type" == "2" ]; then
-    # Disk image backup
-    if [ -z "$disk_image_done" ]; then
+    # Improved disk image backup function
+    perform_disk_image_backup() {
         echo "Available disks for imaging:"
         lsblk
 
@@ -515,22 +550,36 @@ elif [ "$backup_type" == "2" ]; then
 
         # Validate the entered disk path
         if [ ! -b "$disk_to_image" ]; then
-            echo "Error: Invalid disk path. Please enter a valid block device."
-            exit 1
+            handle_error "Invalid disk path. Please enter a valid block device."
         fi
 
         if confirm "Do you want to create a disk image of $disk_to_image?"; then
             section_start_time=$(date +%s)
             mkdir -p "$backup_dir/image"
-            if sudo dd if=$disk_to_image of="$backup_dir/image/disk-image.img" bs=4M status=progress; then
-                section_end_time=$(date +%s)
-                log_section_report "Disk image ($disk_to_image)" $section_start_time $section_end_time
-                log_state "disk_image"
+
+            # Use ddrescue for better error handling and progress reporting
+            if command -v ddrescue &> /dev/null; then
+                echo "Using ddrescue for disk imaging..."
+                if sudo ddrescue -d -f -r3 "$disk_to_image" "$backup_dir/image/disk-image.img" "$backup_dir/image/disk-image.logfile"; then
+                    echo "Disk image created successfully using ddrescue."
+                else
+                    handle_error "Failed to create disk image using ddrescue"
+                fi
             else
-                handle_error "Failed to create disk image"
+                echo "ddrescue not found. Falling back to dd..."
+                # Use a more flexible block size with dd
+                if sudo dd if="$disk_to_image" of="$backup_dir/image/disk-image.img" bs=1M status=progress; then
+                    echo "Disk image created successfully using dd."
+                else
+                    handle_error "Failed to create disk image using dd"
+                fi
             fi
+
+            section_end_time=$(date +%s)
+            log_section_report "Disk image ($disk_to_image)" $section_start_time $section_end_time
+            log_state "disk_image"
         fi
-    fi
+    }
 
 elif [ "$backup_type" == "3" ]; then
     # Borg backup
@@ -651,10 +700,15 @@ verify_backup() {
 
 # Main backup process
 case $backup_type in
-    1) manual_backup ;;
-    2) disk_image_backup ;;
+    1) 
+        # Manual backup with incremental option
+        for dir in /etc /var/lib /opt "$HOME/.config" "$HOME"; do
+            perform_incremental_backup "$dir" "$backup_dir/$(basename "$dir")"
+        done
+        ;;
+    2) perform_disk_image_backup ;;
     3) borg_backup ;;
-    *) echo "Invalid choice. Exiting."; exit 1 ;;
+    *) handle_error "Invalid choice. Exiting." ;;
 esac
 
 verify_backup
