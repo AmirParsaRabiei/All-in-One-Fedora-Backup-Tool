@@ -3,8 +3,11 @@
 This project provides comprehensive backup and restore scripts for Fedora systems. These scripts allow you to create full system backups, including system configurations, user data, installed packages, and more. They also provide options for restoring your system from these backups.
 
 ## TODO
-- Disk backup compression
-- Improve restore script
+- The script is quite long and complex. Consider breaking it down into smaller, modular functions for easier maintenance.
+- Add more comments throughout the script to explain what each section does.
+- Consider adding a dry-run option to show what would be backed up without actually performing the backup.
+- Implement a more robust logging system, possibly writing to a separate log file in addition to the console output.
+- Edit restore script
 
 ## Features
 

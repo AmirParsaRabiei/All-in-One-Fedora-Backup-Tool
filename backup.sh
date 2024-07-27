@@ -10,12 +10,28 @@ check_disk_space() {
     fi
 }
 
-# Improved error handling function
+# Improved error handling function with cleanup
 handle_error() {
     local error_message=$1
     echo "Error: $error_message" >> "$backup_dir/error.log"
     echo "Error occurred. Check $backup_dir/error.log for details."
-    exit 1  # Exit the script on error
+    cleanup
+    exit 1
+}
+
+# Cleanup function for failed or interrupted backups
+cleanup() {
+    echo "Cleaning up partial or failed backup..."
+    if [ -d "$backup_dir" ]; then
+        rm -rf "$backup_dir"
+    fi
+    if [ -f "$backup_dir.tar.gz" ]; then
+        rm "$backup_dir.tar.gz"
+    fi
+    if [ -f "$backup_dir.tar.gz.enc" ]; then
+        rm "$backup_dir.tar.gz.enc"
+    fi
+    echo "Cleanup completed."
 }
 
 # Function to verify backup integrity
@@ -78,7 +94,7 @@ perform_incremental_backup() {
 
 
 # Check for required packages and install if missing
-required_packages=(rsync dd gzip dnf flatpak pip openssl borg)
+required_packages=(rsync dd gzip dnf flatpak pip openssl borg ddrescue cmp)
 missing_packages=()
 
 for package in "${required_packages[@]}"; do
@@ -104,6 +120,7 @@ if [ ${#missing_packages[@]} -gt 0 ]; then
     esac
 fi
 
+
 # Check for incomplete backups
 incomplete_backups=$(find . -maxdepth 1 -type d -name "backup_*" -exec test -f {}/backup_state.log \; -print)
 if [ -n "$incomplete_backups" ]; then
@@ -125,7 +142,7 @@ fi
 
 state_file="$backup_dir/backup_state.log"
 
-trap "echo 'Backup interrupted'; exit 1" SIGINT SIGTERM
+trap cleanup SIGINT SIGTERM
 
 log_state() {
     echo "$1" >> "$state_file"
@@ -543,43 +560,89 @@ if [ "$backup_type" == "1" ]; then
 elif [ "$backup_type" == "2" ]; then
     # Improved disk image backup function
     perform_disk_image_backup() {
-        echo "Available disks for imaging:"
-        lsblk
+    echo "Available disks for imaging:"
+    lsblk
 
-        read -p "Enter the disk to image (e.g., /dev/nvme1n1 or a specific partition like /dev/nvme1n1p1): " disk_to_image
+    read -p "Enter the disk to image (e.g., /dev/nvme1n1 or a specific partition like /dev/nvme1n1p1): " disk_to_image
 
-        # Validate the entered disk path
-        if [ ! -b "$disk_to_image" ]; then
-            handle_error "Invalid disk path. Please enter a valid block device."
+    # Validate the entered disk path
+    if [ ! -b "$disk_to_image" ]; then
+        handle_error "Invalid disk path. Please enter a valid block device."
+    fi
+
+    if confirm "Do you want to create a disk image of $disk_to_image?"; then
+        section_start_time=$(date +%s)
+        mkdir -p "$backup_dir/image"
+
+        # Compression option
+        compress=false
+        read -p "Do you want to compress the disk image? This will save space but take longer. (y/N): " compress_choice
+        case $compress_choice in
+            [Yy]* ) compress=true;;
+            * ) compress=false;;
+        esac
+
+        # Splitting option
+        split=false
+        split_size="4G"
+        read -p "Do you want to split the image into smaller chunks? This is useful for large disks or FAT32 storage. (y/N): " split_choice
+        case $split_choice in
+            [Yy]* ) 
+                split=true
+                read -p "Enter the maximum size for each chunk (e.g., 4G for 4 gigabytes): " split_size
+                ;;
+            * ) split=false;;
+        esac
+
+        # Use ddrescue for better error handling and progress reporting
+        echo "Using ddrescue for disk imaging..."
+        if $compress; then
+            if $split; then
+                sudo ddrescue -d -f -r3 "$disk_to_image" - | gzip -c | split -b "$split_size" - "$backup_dir/image/disk-image.gz.part-"
+            else
+                sudo ddrescue -d -f -r3 "$disk_to_image" - | gzip -c > "$backup_dir/image/disk-image.gz"
+            fi
+        else
+            if $split; then
+                sudo ddrescue -d -f -r3 "$disk_to_image" - | split -b "$split_size" - "$backup_dir/image/disk-image.part-"
+            else
+                sudo ddrescue -d -f -r3 "$disk_to_image" "$backup_dir/image/disk-image.img"
+            fi
         fi
 
-        if confirm "Do you want to create a disk image of $disk_to_image?"; then
-            section_start_time=$(date +%s)
-            mkdir -p "$backup_dir/image"
-
-            # Use ddrescue for better error handling and progress reporting
-            if command -v ddrescue &> /dev/null; then
-                echo "Using ddrescue for disk imaging..."
-                if sudo ddrescue -d -f -r3 "$disk_to_image" "$backup_dir/image/disk-image.img" "$backup_dir/image/disk-image.logfile"; then
-                    echo "Disk image created successfully using ddrescue."
+        if [ $? -eq 0 ]; then
+            echo "Disk image created successfully using ddrescue."
+            
+            # Verification step
+            echo "Verifying the created disk image..."
+            if $compress; then
+                if $split; then
+                    cat "$backup_dir/image/disk-image.gz.part-"* | gunzip -c | sudo cmp -n $(sudo blockdev --getsize64 "$disk_to_image") - "$disk_to_image"
                 else
-                    handle_error "Failed to create disk image using ddrescue"
+                    gunzip -c "$backup_dir/image/disk-image.gz" | sudo cmp -n $(sudo blockdev --getsize64 "$disk_to_image") - "$disk_to_image"
                 fi
             else
-                echo "ddrescue not found. Falling back to dd..."
-                # Use a more flexible block size with dd
-                if sudo dd if="$disk_to_image" of="$backup_dir/image/disk-image.img" bs=1M status=progress; then
-                    echo "Disk image created successfully using dd."
+                if $split; then
+                    cat "$backup_dir/image/disk-image.part-"* | sudo cmp -n $(sudo blockdev --getsize64 "$disk_to_image") - "$disk_to_image"
                 else
-                    handle_error "Failed to create disk image using dd"
+                    sudo cmp -n $(sudo blockdev --getsize64 "$disk_to_image") "$backup_dir/image/disk-image.img" "$disk_to_image"
                 fi
             fi
-
-            section_end_time=$(date +%s)
-            log_section_report "Disk image ($disk_to_image)" $section_start_time $section_end_time
-            log_state "disk_image"
+            
+            if [ $? -eq 0 ]; then
+                echo "Disk image verified successfully."
+            else
+                echo "Warning: Disk image verification failed. The image may be corrupted."
+            fi
+        else
+            handle_error "Failed to create disk image using ddrescue"
         fi
-    }
+
+        section_end_time=$(date +%s)
+        log_section_report "Disk image ($disk_to_image)" $section_start_time $section_end_time
+        log_state "disk_image"
+    fi
+}
 
 elif [ "$backup_type" == "3" ]; then
     # Borg backup
