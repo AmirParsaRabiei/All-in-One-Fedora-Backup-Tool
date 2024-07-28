@@ -81,10 +81,11 @@ perform_manual_backup() {
     local confirm_all=0
 
     local directories=("/etc" "/var" "/opt" "$HOME/.config" "$HOME" "$HOME/.mozilla" "$HOME/.config/google-chrome" "$HOME/.config/microsoft-edge" "$HOME/.local/share/gnome-shell/extensions")
+    local processed_dirs=()
 
     for dir in "${directories[@]}"; do
         local dir_name=$(basename "$dir")
-        if [ -z "${!dir_name}_done" ]; then
+        if [[ ! " ${processed_dirs[@]} " =~ " ${dir_name} " ]]; then
             if [ -d "$backup_dir/$dir_name" ]; then
                 echo "Backup for $dir already exists. Skipping."
             else
@@ -98,7 +99,7 @@ perform_manual_backup() {
                     if sudo rsync -avh --progress "$dir" "$backup_dir/$dir_name/"; then
                         local section_end_time=$(date +%s)
                         log_section_report "$dir backup" $section_start_time $section_end_time
-                        log_state "$dir_name"
+                        processed_dirs+=("$dir_name")
                     else
                         handle_error "Failed to backup $dir"
                     fi
@@ -107,7 +108,46 @@ perform_manual_backup() {
         fi
     done
 
-    # Add other specific backup tasks here (packages, pip, databases, logs)
+    # Backup RPM packages
+    if confirm "Do you want to backup the list of installed RPM packages?"; then
+        local section_start_time=$(date +%s)
+        echo "Backing up RPM package list..."
+        if rpm -qa > "$backup_dir/rpm_packages.txt"; then
+            echo "RPM package list backed up successfully."
+            local section_end_time=$(date +%s)
+            log_section_report "RPM package list backup" $section_start_time $section_end_time
+        else
+            handle_error "Failed to backup RPM package list"
+        fi
+    fi
+
+    # Backup Flatpak packages
+    if confirm "Do you want to backup the list of installed Flatpak packages?"; then
+        local section_start_time=$(date +%s)
+        echo "Backing up Flatpak package list..."
+        if flatpak list --app --columns=application > "$backup_dir/flatpak_packages.txt"; then
+            echo "Flatpak package list backed up successfully."
+            local section_end_time=$(date +%s)
+            log_section_report "Flatpak package list backup" $section_start_time $section_end_time
+        else
+            handle_error "Failed to backup Flatpak package list"
+        fi
+    fi
+
+    # Backup pip packages
+    if confirm "Do you want to backup the list of installed pip packages?"; then
+        local section_start_time=$(date +%s)
+        echo "Backing up pip package list..."
+        if pip list --format=freeze > "$backup_dir/pip_packages.txt"; then
+            echo "pip package list backed up successfully."
+            local section_end_time=$(date +%s)
+            log_section_report "pip package list backup" $section_start_time $section_end_time
+        else
+            handle_error "Failed to backup pip package list"
+        fi
+    fi
+
+    # Add other specific backup tasks here (databases, logs, etc.)
 }
 
 perform_disk_image_backup() {

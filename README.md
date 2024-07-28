@@ -10,9 +10,10 @@ This project provides comprehensive backup and restore scripts for Fedora system
 5. Implement a dry-run option to show what would be backed up without actually performing the backup.
 6. Add a progress bar or more detailed progress information for long-running operations.
 7. Implement parallel processing for some operations to speed up the backup process.
-8. Add a restore function to make it easier to recover from backups.
+8. Modify restore script.
 9. Implement a more robust state management system to allow for easier resumption of interrupted backups.
 10. Add support for remote backups (e.g., to a network drive or cloud storage).
+11. Add docker backup in manual method
 
 ## Features
 

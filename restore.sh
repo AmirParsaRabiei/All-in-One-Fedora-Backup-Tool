@@ -1,25 +1,58 @@
 #!/bin/bash
 
-set -e  # Exit immediately if a command exits with a non-zero status.
-
-# Function to handle errors
+# Utility Functions
 handle_error() {
     local error_message=$1
     echo "Error: $error_message" >&2
     exit 1
 }
 
-# Function to check required commands
-check_required_commands() {
-    local commands=("rsync" "tar" "openssl" "borg" "flatpak" "pip" "dd" "gzip" "dnf" "ddrescue" "cmp")
-    for cmd in "${commands[@]}"; do
-        if ! command -v "$cmd" &> /dev/null; then
-            handle_error "Required command '$cmd' not found. Please install it and try again."
-        fi
+confirm() {
+    local prompt=$1
+    while true; do
+        read -p "$prompt (Y/n/A, default is Y): " yn
+        case ${yn:-Y} in
+            [Yy]* ) return 0;;
+            [Nn]* ) return 1;;
+            [Aa]* ) return 2;;
+            * ) echo "Please answer yes, no, or all.";;
+        esac
     done
 }
 
-# Function to find the most recent backup
+log_section_report() {
+    local section=$1
+    local start_time=$2
+    local end_time=$3
+    echo "$section: completed in $(($end_time - $start_time)) seconds" >> "$restore_dir/restore_report.txt"
+}
+
+# Package Management
+check_and_install_packages() {
+    local required_packages=(rsync dd gzip dnf flatpak pip openssl borg ddrescue cmp)
+    local missing_packages=()
+
+    for package in "${required_packages[@]}"; do
+        if ! command -v $package &> /dev/null; then
+            missing_packages+=($package)
+        fi
+    done
+
+    if [ ${#missing_packages[@]} -gt 0 ]; then
+        echo "The following packages are required: ${missing_packages[*]}"
+        if confirm "Do you want to install them now?"; then
+            if sudo -v; then
+                sudo dnf install -y ${missing_packages[*]}
+            else
+                handle_error "sudo privileges required to install packages. Exiting."
+            fi
+        else
+            handle_error "Required packages are missing. Exiting."
+        fi
+    fi
+}
+
+# Restore Functions
 find_latest_backup() {
     local latest_backup=$(find . -maxdepth 1 -type d -name "backup_*" | sort -r | head -n1)
     if [ -z "$latest_backup" ]; then
@@ -28,7 +61,6 @@ find_latest_backup() {
     echo "$latest_backup"
 }
 
-# Function to decrypt backup
 decrypt_backup() {
     local encrypted_file=$1
     local decrypted_file=$2
@@ -43,7 +75,6 @@ decrypt_backup() {
     fi
 }
 
-# Function to extract backup
 extract_backup() {
     local archive=$1
     local destination=$2
@@ -55,77 +86,63 @@ extract_backup() {
     fi
 }
 
-# Function to restore directory
 restore_directory() {
     local source=$1
     local destination=$2
+    local section_start_time=$(date +%s)
     
     if sudo rsync -avh --delete "$source/" "$destination"; then
         echo "Directory $destination restored successfully."
+        local section_end_time=$(date +%s)
+        log_section_report "Restore $destination" $section_start_time $section_end_time
     else
         handle_error "Failed to restore directory $destination"
     fi
 }
 
-# Function to restore packages
 restore_packages() {
-    local package_list=$1
+    local rpm_list=$1
+    local flatpak_list=$2
+    local pip_list=$3
+    local section_start_time=$(date +%s)
     
-    if sudo dnf install -y $(cat "$package_list"); then
-        echo "Packages restored successfully."
-    else
-        handle_error "Failed to restore packages"
-    fi
-}
-
-# Function to restore Flatpak apps
-restore_flatpak_apps() {
-    local flatpak_list=$1
-    
-    if xargs -a "$flatpak_list" flatpak install -y; then
-        echo "Flatpak apps restored successfully."
-    else
-        handle_error "Failed to restore Flatpak apps"
-    fi
-}
-
-# Function to restore pip packages
-restore_pip_packages() {
-    local requirements_file=$1
-    
-    if pip install -r "$requirements_file"; then
-        echo "Pip packages restored successfully."
-    else
-        handle_error "Failed to restore pip packages"
-    fi
-}
-
-# Function to restore database dumps
-restore_database_dumps() {
-    local dump_dir=$1
-    
-    # MySQL/MariaDB
-    if [ -f "$dump_dir/mysql_dump.sql" ]; then
-        if sudo mysql < "$dump_dir/mysql_dump.sql"; then
-            echo "MySQL/MariaDB dump restored successfully."
+    # Restore RPM packages
+    if [ -f "$rpm_list" ]; then
+        echo "Restoring RPM packages..."
+        if sudo dnf install -y $(cat "$rpm_list"); then
+            echo "RPM packages restored successfully."
         else
-            handle_error "Failed to restore MySQL/MariaDB dump"
+            handle_error "Failed to restore RPM packages"
         fi
     fi
     
-    # PostgreSQL
-    if [ -f "$dump_dir/postgresql_dump.sql" ]; then
-        if sudo -u postgres psql < "$dump_dir/postgresql_dump.sql"; then
-            echo "PostgreSQL dump restored successfully."
+    # Restore Flatpak packages
+    if [ -f "$flatpak_list" ]; then
+        echo "Restoring Flatpak packages..."
+        if xargs -a "$flatpak_list" flatpak install -y; then
+            echo "Flatpak packages restored successfully."
         else
-            handle_error "Failed to restore PostgreSQL dump"
+            handle_error "Failed to restore Flatpak packages"
         fi
     fi
+    
+    # Restore pip packages
+    if [ -f "$pip_list" ]; then
+        echo "Restoring pip packages..."
+        if pip install -r "$pip_list"; then
+            echo "Pip packages restored successfully."
+        else
+            handle_error "Failed to restore pip packages"
+        fi
+    fi
+    
+    local section_end_time=$(date +%s)
+    log_section_report "Restore packages" $section_start_time $section_end_time
 }
 
-# Function to restore disk image
 restore_disk_image() {
     local image_file=$1
+    local section_start_time=$(date +%s)
     
     echo "Available disks:"
     lsblk
@@ -139,180 +156,133 @@ restore_disk_image() {
     if confirm "Are you sure you want to restore the disk image to $target_disk? This will erase all data on the disk."; then
         if sudo ddrescue -f "$image_file" "$target_disk"; then
             echo "Disk image restored successfully."
+            local section_end_time=$(date +%s)
+            log_section_report "Restore disk image" $section_start_time $section_end_time
         else
             handle_error "Failed to restore disk image"
         fi
     fi
 }
 
-# Function to restore Borg backup
 restore_borg_backup() {
     local repo_path=$1
     local restore_path=$2
+    local section_start_time=$(date +%s)
     
     if borg extract "$repo_path::$(borg list "$repo_path" | tail -n1 | cut -d' ' -f1)" "$restore_path"; then
         echo "Borg backup restored successfully to $restore_path."
+        local section_end_time=$(date +%s)
+        log_section_report "Restore Borg backup" $section_start_time $section_end_time
     else
         handle_error "Failed to restore Borg backup"
     fi
 }
 
-# Function to confirm action
-confirm() {
-    read -p "$1 (y/N): " response
-    case "$response" in
-        [yY][eE][sS]|[yY]) 
-            return 0
-            ;;
-        *)
-            return 1
-            ;;
-    esac
+perform_manual_restore() {
+    local yes_to_all=0
+    local confirm_all=0
+
+    local directories=("/etc" "/var" "/opt" "$HOME/.config" "$HOME" "$HOME/.mozilla" "$HOME/.config/google-chrome" "$HOME/.config/microsoft-edge" "$HOME/.local/share/gnome-shell/extensions")
+    
+    for dir in "${directories[@]}"; do
+        local dir_name=$(basename "$dir")
+        if [ -d "$restore_dir/$dir_name" ]; then
+            if [ "$yes_to_all" -eq 0 ]; then
+                confirm "Do you want to restore $dir?"
+                confirm_all=$?
+                [ "$confirm_all" -eq 2 ] && yes_to_all=1
+            fi
+            if [ "$yes_to_all" -eq 1 ] || [ "$confirm_all" -eq 0 ]; then
+                restore_directory "$restore_dir/$dir_name" "$dir"
+            fi
+        else
+            echo "Backup for $dir not found. Skipping."
+        fi
+    done
+
+    # Restore package lists
+    if [ -f "$restore_dir/rpm_packages.txt" ] || [ -f "$restore_dir/flatpak_packages.txt" ] || [ -f "$restore_dir/pip_packages.txt" ]; then
+        if confirm "Do you want to restore installed packages?"; then
+            restore_packages "$restore_dir/rpm_packages.txt" "$restore_dir/flatpak_packages.txt" "$restore_dir/pip_packages.txt"
+        fi
+    fi
 }
 
-# Main script
+perform_disk_image_restore() {
+    if [ -f "$restore_dir/image/disk-image.img" ]; then
+        restore_disk_image "$restore_dir/image/disk-image.img"
+    elif [ -f "$restore_dir/image/disk-image.gz" ]; then
+        echo "Compressed disk image found. Decompressing..."
+        gunzip -c "$restore_dir/image/disk-image.gz" > "$restore_dir/image/disk-image.img"
+        restore_disk_image "$restore_dir/image/disk-image.img"
+        rm "$restore_dir/image/disk-image.img"
+    elif [ -f "$restore_dir/image/disk-image.gz.part-aa" ]; then
+        echo "Split compressed disk image found. Reassembling and decompressing..."
+        cat "$restore_dir/image/disk-image.gz.part-"* | gunzip -c > "$restore_dir/image/disk-image.img"
+        restore_disk_image "$restore_dir/image/disk-image.img"
+        rm "$restore_dir/image/disk-image.img"
+    elif [ -f "$restore_dir/image/disk-image.part-aa" ]; then
+        echo "Split disk image found. Reassembling..."
+        cat "$restore_dir/image/disk-image.part-"* > "$restore_dir/image/disk-image.img"
+        restore_disk_image "$restore_dir/image/disk-image.img"
+        rm "$restore_dir/image/disk-image.img"
+    else
+        handle_error "No valid disk image found in the backup"
+    fi
+}
 
-echo "Fedora Backup Restore Script"
-echo "============================"
+perform_borg_restore() {
+    read -p "Enter the path to restore Borg backup: " restore_path
+    restore_borg_backup "$restore_dir/borg_repo" "$restore_path"
+}
 
-# Check for required commands
-check_required_commands
+# Main Execution
+main() {
+    check_and_install_packages
 
-# Find the latest backup
-backup_dir=$(find_latest_backup)
-echo "Found backup directory: $backup_dir"
+    restore_dir=$(find_latest_backup)
+    echo "Found backup directory: $restore_dir"
 
-# Determine if the backup is encrypted
-if [ -f "$backup_dir.tar.gz.enc" ]; then
-    echo "Encrypted backup found. Decrypting..."
-    decrypt_backup "$backup_dir.tar.gz.enc" "$backup_dir.tar.gz"
-    extract_backup "$backup_dir.tar.gz" "$backup_dir"
-    rm "$backup_dir.tar.gz"  # Remove the decrypted archive after extraction
-elif [ -f "$backup_dir.tar.gz" ]; then
-    echo "Compressed backup found. Extracting..."
-    extract_backup "$backup_dir.tar.gz" "$backup_dir"
-fi
+    # Determine if the backup is encrypted
+    if [ -f "$restore_dir.tar.gz.enc" ]; then
+        echo "Encrypted backup found. Decrypting..."
+        decrypt_backup "$restore_dir.tar.gz.enc" "$restore_dir.tar.gz"
+        extract_backup "$restore_dir.tar.gz" "$restore_dir"
+        rm "$restore_dir.tar.gz"  # Remove the decrypted archive after extraction
+    elif [ -f "$restore_dir.tar.gz" ]; then
+        echo "Compressed backup found. Extracting..."
+        extract_backup "$restore_dir.tar.gz" "$restore_dir"
+    fi
 
-# Determine the backup type
-if [ -d "$backup_dir/borg_repo" ]; then
-    backup_type="borg"
-elif [ -d "$backup_dir/image" ]; then
-    backup_type="disk_image"
-else
-    backup_type="manual"
-fi
+    # Determine the backup type
+    if [ -d "$restore_dir/borg_repo" ]; then
+        backup_type="borg"
+    elif [ -d "$restore_dir/image" ]; then
+        backup_type="disk_image"
+    else
+        backup_type="manual"
+    fi
 
-echo "Detected backup type: $backup_type"
+    echo "Detected backup type: $backup_type"
 
-case $backup_type in
-    "manual")
-        echo "Select components to restore:"
-        options=(
-            "System configuration (/etc)"
-            "Var lib directory (/var/lib)"
-            "Opt directory (/opt)"
-            "User configuration (~/.config)"
-            "Home directory"
-            "Browser data"
-            "GNOME extensions"
-            "Installed packages"
-            "Pip packages"
-            "Database dumps"
-            "System logs"
-            "All of the above"
-        )
-        
-        PS3="Enter your choice (1-${#options[@]}): "
-        select opt in "${options[@]}"
-        do
-            case $opt in
-                "System configuration (/etc)")
-                    restore_directory "$backup_dir/etc" "/etc"
-                    ;;
-                "Var lib directory (/var/lib)")
-                    restore_directory "$backup_dir/var_lib" "/var/lib"
-                    ;;
-                "Opt directory (/opt)")
-                    restore_directory "$backup_dir/opt" "/opt"
-                    ;;
-                "User configuration (~/.config)")
-                    restore_directory "$backup_dir/config" "$HOME/.config"
-                    ;;
-                "Home directory")
-                    restore_directory "$backup_dir/home" "$HOME"
-                    ;;
-                "Browser data")
-                    restore_directory "$backup_dir/mozilla" "$HOME/.mozilla"
-                    restore_directory "$backup_dir/google-chrome" "$HOME/.config/google-chrome"
-                    restore_directory "$backup_dir/microsoft-edge" "$HOME/.config/microsoft-edge"
-                    ;;
-                "GNOME extensions")
-                    restore_directory "$backup_dir/gnome-extensions" "$HOME/.local/share/gnome-shell/extensions"
-                    sudo restore_directory "$backup_dir/gnome-extensions/system" "/usr/share/gnome-shell/extensions"
-                    ;;
-                "Installed packages")
-                    restore_packages "$backup_dir/rpm-packages-list.txt"
-                    restore_flatpak_apps "$backup_dir/flatpak-apps-list.txt"
-                    ;;
-                "Pip packages")
-                    restore_pip_packages "$backup_dir/requirements.txt"
-                    ;;
-                "Database dumps")
-                    restore_database_dumps "$backup_dir/database_dumps"
-                    ;;
-                "System logs")
-                    restore_directory "$backup_dir/system_logs" "/var/log"
-                    ;;
-                "All of the above")
-                    restore_directory "$backup_dir/etc" "/etc"
-                    restore_directory "$backup_dir/var_lib" "/var/lib"
-                    restore_directory "$backup_dir/opt" "/opt"
-                    restore_directory "$backup_dir/config" "$HOME/.config"
-                    restore_directory "$backup_dir/home" "$HOME"
-                    restore_directory "$backup_dir/mozilla" "$HOME/.mozilla"
-                    restore_directory "$backup_dir/google-chrome" "$HOME/.config/google-chrome"
-                    restore_directory "$backup_dir/microsoft-edge" "$HOME/.config/microsoft-edge"
-                    restore_directory "$backup_dir/gnome-extensions" "$HOME/.local/share/gnome-shell/extensions"
-                    sudo restore_directory "$backup_dir/gnome-extensions/system" "/usr/share/gnome-shell/extensions"
-                    restore_packages "$backup_dir/rpm-packages-list.txt"
-                    restore_flatpak_apps "$backup_dir/flatpak-apps-list.txt"
-                    restore_pip_packages "$backup_dir/requirements.txt"
-                    restore_database_dumps "$backup_dir/database_dumps"
-                    restore_directory "$backup_dir/system_logs" "/var/log"
-                    break
-                    ;;
-                *) echo "Invalid option $REPLY";;
-            esac
-            REPLY=
-        done
-        ;;
-    "disk_image")
-        if [ -f "$backup_dir/image/disk-image.img" ]; then
-            restore_disk_image "$backup_dir/image/disk-image.img"
-        elif [ -f "$backup_dir/image/disk-image.gz" ]; then
-            echo "Compressed disk image found. Decompressing..."
-            gunzip -c "$backup_dir/image/disk-image.gz" > "$backup_dir/image/disk-image.img"
-            restore_disk_image "$backup_dir/image/disk-image.img"
-            rm "$backup_dir/image/disk-image.img"
-        elif [ -f "$backup_dir/image/disk-image.gz.part-aa" ]; then
-            echo "Split compressed disk image found. Reassembling and decompressing..."
-            cat "$backup_dir/image/disk-image.gz.part-"* | gunzip -c > "$backup_dir/image/disk-image.img"
-            restore_disk_image "$backup_dir/image/disk-image.img"
-            rm "$backup_dir/image/disk-image.img"
-        elif [ -f "$backup_dir/image/disk-image.part-aa" ]; then
-            echo "Split disk image found. Reassembling..."
-            cat "$backup_dir/image/disk-image.part-"* > "$backup_dir/image/disk-image.img"
-            restore_disk_image "$backup_dir/image/disk-image.img"
-            rm "$backup_dir/image/disk-image.img"
-        else
-            handle_error "No valid disk image found in the backup"
-        fi
-        ;;
-    "borg")
-        read -p "Enter the path to restore Borg backup: " restore_path
-        restore_borg_backup "$backup_dir/borg_repo" "$restore_path"
-        ;;
-esac
+    start_time=$(date +%s)
 
-echo "Restore process completed."
-echo "Please reboot your system to ensure all changes take effect."
+    case $backup_type in
+        "manual") perform_manual_restore ;;
+        "disk_image") perform_disk_image_restore ;;
+        "borg") perform_borg_restore ;;
+        *) handle_error "Invalid backup type" ;;
+    esac
+
+    end_time=$(date +%s)
+    total_time=$(($end_time - $start_time))
+
+    echo "Restore completed."
+    echo "Total time taken: $total_time seconds"
+    echo "Detailed report can be found in $restore_dir/restore_report.txt"
+    cat "$restore_dir/restore_report.txt"
+
+    echo "Restore process finished. Please reboot your system to ensure all changes take effect."
+}
+
+main
