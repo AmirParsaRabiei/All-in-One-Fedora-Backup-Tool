@@ -42,7 +42,7 @@ confirm() {
 
 # Package Management
 check_and_install_packages() {
-    local required_packages=(rsync dd gzip dnf flatpak pip openssl borg ddrescue cmp)
+    local required_packages=(rsync dd gzip dnf flatpak pip openssl borg ddrescue cmp docker)
     local missing_packages=()
 
     for package in "${required_packages[@]}"; do
@@ -147,7 +147,32 @@ perform_manual_backup() {
         fi
     fi
 
-    # Add other specific backup tasks here (databases, logs, etc.)
+    # Backup Docker images and containers
+    if command -v docker &> /dev/null; then
+        if confirm "Do you want to backup Docker images and containers?"; then
+            local section_start_time=$(date +%s)
+            echo "Backing up Docker images and containers..."
+            
+            # Create a directory for Docker backups
+            mkdir -p "$backup_dir/docker"
+            
+            # Save Docker images
+            docker images --format '{{.Repository}}:{{.Tag}}' | xargs -I {} docker save {} | gzip > "$backup_dir/docker/docker_images.tar.gz"
+            
+            # Save Docker container information
+            docker ps -a --format '{{.Names}}' > "$backup_dir/docker/container_names.txt"
+            while read -r container_name; do
+                docker inspect "$container_name" > "$backup_dir/docker/$container_name-inspect.json"
+            done < "$backup_dir/docker/container_names.txt"
+            
+            echo "Docker images and containers backed up successfully."
+            local section_end_time=$(date +%s)
+            log_section_report "Docker backup" $section_start_time $section_end_time
+        fi
+    else
+        echo "Docker is not installed. Skipping Docker backup."
+    fi
+
 }
 
 perform_disk_image_backup() {
@@ -235,7 +260,6 @@ perform_borg_backup() {
 
     if borg create --progress --stats --compression lz4 --checkpoint-interval 300 \
         "$borg_repo::backup-{now}" \
-        /var/lib/docker \
         "$HOME"; then
         echo "Borg backup created successfully with LZ4 compression."
         local section_end_time=$(date +%s)
@@ -344,7 +368,7 @@ main() {
     echo "Choose backup type:"
     echo "1) Manual backup"
     echo "2) Disk image"
-    echo "3) Borg backup(Completed/Compressed/Encrypted)"
+    echo "3) Borg backup(Completed/Compressed/Encrypted/ /home)"
     read -p "Enter choice [1-3]: " backup_type
 
     start_time=$(date +%s)

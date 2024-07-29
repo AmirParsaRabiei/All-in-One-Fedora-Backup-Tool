@@ -13,7 +13,6 @@ This project provides comprehensive backup and restore scripts for Fedora system
 8. Modify restore script.
 9. Implement a more robust state management system to allow for easier resumption of interrupted backups.
 10. Add support for remote backups (e.g., to a network drive or cloud storage).
-11. Add docker backup in manual method
 
 ## Features
 
@@ -80,6 +79,13 @@ sudo dnf install rsync tar openssl borgbackup flatpak python3-pip
    sudo ./restore.sh
    ```
 5. Follow the on-screen prompts to select components to restore.
+
+## Suggestions
+
+- If you want to backup only from /home, we suggest you use borg and don't use sudo when executing
+- But if, for example, you want to backup Docker containers or images or special and separate things, we recommend manual backup.
+- And finally, if you want to backup everything exactly and without any changes, use disk image backup
+
 
 ## Backup Types
 
